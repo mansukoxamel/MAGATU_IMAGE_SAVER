@@ -1,0 +1,68 @@
+.magatu-img-dl-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+}
+
+.magatu-img-dl-button {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  font: 18px/1 Arial, sans-serif;
+  padding: 0;
+  margin: 0;
+  opacity: 0.68;
+  pointer-events: auto;
+}
+
+.magatu-img-dl-button:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.9);
+}
+
+.magatu-img-dl-button:active {
+  transform: scale(0.94);
+}
+
+.magatu-img-dl-button[data-state="busy"] {
+  background: #666;
+}
+
+.magatu-img-dl-button[data-state="ok"] {
+  background: #238636;
+}
+
+.magatu-img-dl-button[data-state="error"] {
+  background: #b42318;
+}
+
+.magatu-img-dl-button.magatu-img-dl-link-button {
+  background: rgba(24, 86, 160, 0.78);
+}
+
+.magatu-img-dl-button.magatu-img-dl-link-button:hover {
+  background: rgba(24, 86, 160, 0.95);
+}
+
+.magatu-img-dl-notice {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  z-index: 2147483647;
+  transform: translateX(-50%);
+  max-width: min(680px, calc(100vw - 32px));
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: #b42318;
+  color: #fff;
+  font: 13px/1.45 Arial, sans-serif;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+}
