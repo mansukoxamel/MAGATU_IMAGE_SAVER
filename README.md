@@ -60,3 +60,5 @@ This adapter intentionally does not include list UI, page-fetch, or broad URL gu
 - Some sites return HTML instead of an image for hotlink-protected URLs. The extension detects and deletes obvious HTML/XML downloads.
 
 Use it only for images you are allowed to save.
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
