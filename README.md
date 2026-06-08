@@ -6,6 +6,8 @@ It also has a conservative foundation for linked/original-image downloads. The g
 
 The current version also includes a small xchina.co adapter that restores the previous known-good behavior for that site.
 
+When linked/original images are available, an `ALL n` button appears at the page's upper-right corner. It downloads the currently detected linked/original images sequentially.
+
 ## Install
 
 1. Open `chrome://extensions`.
@@ -28,6 +30,7 @@ Downloaded files go to Chrome's download folder under:
 - `blob:` image URLs when the page allows the content script to fetch the blob.
 - Sites that block right-click, because the extension uses its own overlay button.
 - Generic linked image URLs only when the image is inside a normal `<a href>` wrapper, using direct image links or common query parameters such as `img_url`, `image_url`, `media`, and `url`.
+- Bulk linked/original-image download through the page-level `ALL n` button.
 
 ## Site Adapters
 

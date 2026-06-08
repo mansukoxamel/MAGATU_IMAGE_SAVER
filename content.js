@@ -6,6 +6,7 @@
   const MIN_WIDTH = 80;
   const MIN_HEIGHT = 80;
   const SCAN_INTERVAL_MS = 1000;
+  const BULK_DOWNLOAD_DELAY_MS = 350;
   const IMAGE_EXT_RE = /\.(avif|bmp|gif|jpe?g|png|svg|webp)(?:[?#].*)?$/i;
   const DISABLE_GENERIC_LINK_HOSTS = [
     /(^|\.)google\./i,
@@ -17,8 +18,11 @@
     : [];
 
   let layer = null;
+  let bulkButton = null;
+  let bulkRunning = false;
   let scanTimer = 0;
   let positionTimer = 0;
+  const linkedTargets = new Map();
 
   init();
 
@@ -43,11 +47,34 @@
   }
 
   function ensureLayer() {
-    if (layer && layer.isConnected) return layer;
-    layer = document.createElement("div");
-    layer.className = "magatu-img-dl-layer";
-    document.documentElement.appendChild(layer);
+    if (!layer || !layer.isConnected) {
+      layer = document.createElement("div");
+      layer.className = "magatu-img-dl-layer";
+      document.documentElement.appendChild(layer);
+    }
+    ensureBulkButton();
     return layer;
+  }
+
+  function ensureBulkButton() {
+    if (bulkButton && bulkButton.isConnected) return bulkButton;
+
+    bulkButton = document.createElement("button");
+    bulkButton.className = "magatu-img-dl-button magatu-img-dl-bulk-button";
+    bulkButton.type = "button";
+    bulkButton.textContent = "ALL 0";
+    bulkButton.title = "Download all linked images";
+    bulkButton.hidden = true;
+
+    bulkButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      downloadAllLinkedImages();
+    }, true);
+
+    layer.appendChild(bulkButton);
+    return bulkButton;
   }
 
   function scheduleScan() {
@@ -66,6 +93,7 @@
     candidates.forEach(attachButton);
     candidates.forEach(attachLinkButton);
     updateButtonPositions();
+    updateBulkButton();
   }
 
   function isCandidateElement(el) {
@@ -105,10 +133,16 @@
 
   function attachLinkButton(el) {
     if (!canUseLinkResolver()) return;
-    if (el.dataset && el.dataset.magatuImgDlLinkAttached === "1") return;
 
     const request = resolveLinkedImageRequest(el);
-    if (!request) return;
+    if (!request) {
+      unregisterLinkedTarget(el);
+      return;
+    }
+
+    registerLinkedTarget(el, request);
+
+    if (el.dataset && el.dataset.magatuImgDlLinkAttached === "1") return;
 
     if (el.dataset) el.dataset.magatuImgDlLinkAttached = "1";
 
@@ -152,15 +186,21 @@
     if (!layer) return;
     const buttons = Array.from(layer.querySelectorAll(".magatu-img-dl-button"));
     for (const btn of buttons) {
+      if (btn === bulkButton) continue;
+
       const el = btn._magatuTarget;
       if (!el || !el.isConnected || !isCandidateElement(el)) {
         removeButton(btn, el);
         continue;
       }
 
-      if (btn._magatuKind === "link" && !resolveLinkedImageRequest(el)) {
-        removeButton(btn, el);
-        continue;
+      if (btn._magatuKind === "link") {
+        const request = resolveLinkedImageRequest(el);
+        if (!request) {
+          removeButton(btn, el);
+          continue;
+        }
+        registerLinkedTarget(el, request);
       }
 
       const rect = getUsefulRect(el);
@@ -172,6 +212,7 @@
       btn.style.top = `${Math.max(0, rect.top + 8)}px`;
       btn.style.display = rect.bottom < 0 || rect.top > innerHeight || rect.right < 0 || rect.left > innerWidth ? "none" : "";
     }
+    updateBulkButton();
   }
 
   function removeButton(btn, el) {
@@ -180,6 +221,7 @@
     if (!el || !el.dataset) return;
     if (isLinkButton) {
       delete el.dataset.magatuImgDlLinkAttached;
+      unregisterLinkedTarget(el);
     } else {
       delete el.dataset[ATTACHED];
     }
@@ -195,12 +237,12 @@
   }
 
   async function downloadUrl(request, btn) {
-    flash(btn, "busy", "...");
+    if (btn) flash(btn, "busy", "...");
 
     try {
       const resolved = await resolveDownloadUrl(request);
       const filename = resolved.filename || deriveFilename(resolved.sourceUrl || resolved.url, resolved.mime);
-      chrome.runtime.sendMessage({
+      const response = await sendDownloadMessage({
         type: "download-image",
         url: resolved.downloadUrl,
         filename,
@@ -209,17 +251,119 @@
         useDownloadHeaders: !!resolved.useDownloadHeaders,
         requestHeaders: Array.isArray(resolved.requestHeaders) ? resolved.requestHeaders : [],
         dnrRegexFilter: resolved.dnrRegexFilter || ""
-      }, (response) => {
-        if (chrome.runtime.lastError || !response || !response.ok) {
-          flash(btn, "error", "!");
-        } else {
-          flash(btn, "ok", "OK");
-        }
       });
+
+      if (!response || !response.ok) {
+        if (btn) flash(btn, "error", "!");
+        return false;
+      }
+
+      if (btn) flash(btn, "ok", "OK");
+      return true;
     } catch (err) {
       console.warn("[MAGATU-IMG-DL] download failed", err);
-      flash(btn, "error", "!");
+      if (btn) flash(btn, "error", "!");
+      return false;
     }
+  }
+
+  function sendDownloadMessage(message) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage(message, (response) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(response || { ok: false });
+        }
+      });
+    });
+  }
+
+  async function downloadAllLinkedImages() {
+    if (!bulkButton || bulkRunning) return;
+
+    const requests = collectLinkedDownloadRequests(true);
+    if (!requests.length) {
+      setBulkButtonState("error", "ALL 0");
+      setTimeout(updateBulkButton, 1200);
+      return;
+    }
+
+    bulkRunning = true;
+    let succeeded = 0;
+
+    for (let i = 0; i < requests.length; i++) {
+      setBulkButtonState("busy", `${i + 1}/${requests.length}`);
+      const ok = await downloadUrl(requests[i], null);
+      if (ok) succeeded++;
+      if (i < requests.length - 1) await sleep(BULK_DOWNLOAD_DELAY_MS);
+    }
+
+    setBulkButtonState(succeeded === requests.length ? "ok" : "error", `${succeeded}/${requests.length}`);
+    setTimeout(() => {
+      bulkRunning = false;
+      updateBulkButton();
+    }, 1500);
+  }
+
+  function registerLinkedTarget(el, request) {
+    const normalized = normalizeDownloadRequest(request);
+    if (!el || !normalized) return;
+    linkedTargets.set(makeTargetId(el), { el, request: normalized });
+  }
+
+  function unregisterLinkedTarget(el) {
+    const id = el && el.dataset && el.dataset.magatuImgDlId;
+    if (id) linkedTargets.delete(id);
+  }
+
+  function collectLinkedDownloadRequests(refresh) {
+    const requests = [];
+    const seen = new Set();
+
+    for (const [id, entry] of Array.from(linkedTargets.entries())) {
+      const el = entry && entry.el;
+      if (!el || !el.isConnected) {
+        linkedTargets.delete(id);
+        continue;
+      }
+
+      const request = normalizeDownloadRequest(refresh ? resolveLinkedImageRequest(el) : entry.request);
+      if (!request) {
+        linkedTargets.delete(id);
+        continue;
+      }
+
+      if (refresh) linkedTargets.set(id, { el, request });
+      if (seen.has(request.url)) continue;
+      seen.add(request.url);
+      requests.push(request);
+    }
+
+    return requests;
+  }
+
+  function updateBulkButton() {
+    if (!bulkButton || bulkRunning) return;
+
+    const count = collectLinkedDownloadRequests(false).length;
+    bulkButton.hidden = count === 0;
+    bulkButton.disabled = count === 0;
+    bulkButton.dataset.state = "";
+    bulkButton.textContent = `ALL ${count}`;
+    bulkButton.title = `Download all linked images (${count})`;
+  }
+
+  function setBulkButtonState(state, text) {
+    if (!bulkButton) return;
+    bulkButton.hidden = false;
+    bulkButton.disabled = false;
+    bulkButton.dataset.state = state;
+    bulkButton.textContent = text;
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   function resolveVisibleImageRequest(el) {
